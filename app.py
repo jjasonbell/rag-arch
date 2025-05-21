@@ -55,36 +55,33 @@ def save_uploaded_file(uploaded_file):
 
 def select_llm():
     st.header("Choose LLM")
-    llm_choice = st.selectbox(
-        "Select LLM", 
-        ["Gemini", "Cohere", "GPT-4o-mini", "GPT-4.1"], 
-        on_change=reset_pipeline_generated
-    )
-
-    # Load API keys
-    api_keys = {
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
-        "COHERE_API_TOKEN": os.getenv("COHERE_API_TOKEN")
-    }
-
-    # Check for missing key
-    key_map = {
-        "GPT-4o-mini": "OPENAI_API_KEY",
-        "GPT-4.1": "OPENAI_API_KEY",
-        "Gemini": "GOOGLE_API_KEY",
-        "Cohere": "COHERE_API_TOKEN"
-    }
-
-    needed_key = key_map.get(llm_choice)
-    if not api_keys.get(needed_key):
-        st.error(f"{needed_key.replace('_', ' ').title()} not found. Please add it to your .env file.")
-        return None, llm_choice
-
-    # Import the loader at runtime (prevents Streamlit scanning torch/transformers)
-    import llm_loader
-    llm = llm_loader.load_llm(llm_choice, api_keys)
-    st.write(f"{llm_choice} selected")
+    llm_choice = st.selectbox("Select LLM", ["Gemini", "Cohere", "GPT-4o-mini", "GPT-4.1"], on_change=reset_pipeline_generated)
+    
+    if llm_choice == "GPT-4o-mini" or llm_choice == "GPT-4.1":
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            st.error("OpenAI API key not found. Please add it to your .env file.")
+            return None, llm_choice
+            
+        if llm_choice == "GPT-4o-mini":
+            llm = OpenAI(temperature=0.1, model="gpt-4o-mini", api_key=openai_api_key)
+        else:  # GPT-4.1
+            llm = OpenAI(temperature=0.1, model="gpt-4-0125-preview", api_key=openai_api_key)
+        st.write(f"{llm_choice} selected")
+    elif llm_choice == "Gemini":
+        google_api_key = os.getenv('GOOGLE_API_KEY')
+        if not google_api_key:
+            st.error("Google API key not found. Please add it to your .env file.")
+            return None, llm_choice
+        llm = GoogleGenAI(model="gemini-1.5-flash-latest", api_key=google_api_key)
+        st.write(f"{llm_choice} selected")
+    elif llm_choice == "Cohere":
+        cohere_api_key = os.getenv('COHERE_API_TOKEN')
+        if not cohere_api_key:
+            st.error("Cohere API key not found. Please add it to your .env file.")
+            return None, llm_choice
+        llm = Cohere(model="command", api_key=cohere_api_key)
+        st.write(f"{llm_choice} selected")
     return llm, llm_choice
 
 def select_embedding_model():
