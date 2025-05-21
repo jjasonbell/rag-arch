@@ -1,7 +1,8 @@
 import os, tempfile, qdrant_client
 import streamlit as st
+from dotenv import load_dotenv
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.gemini import Gemini
+from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.llms.cohere import Cohere
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import SimpleDirectoryReader
@@ -19,6 +20,9 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.vector_stores.pinecone import  PineconeVectorStore
 from pinecone import Pinecone
 
+
+load_dotenv()
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def reset_pipeline_generated():
     if 'pipeline_generated' in st.session_state:
@@ -51,19 +55,32 @@ def save_uploaded_file(uploaded_file):
 
 def select_llm():
     st.header("Choose LLM")
-    llm_choice = st.selectbox("Select LLM", ["Gemini", "Cohere", "GPT-3.5", "GPT-4"], on_change=reset_pipeline_generated)
+    llm_choice = st.selectbox("Select LLM", ["Gemini", "Cohere", "GPT-4o-mini", "GPT-4.1"], on_change=reset_pipeline_generated)
     
-    if llm_choice == "GPT-3.5":
-        llm = OpenAI(temperature=0.1, model="gpt-3.5-turbo-1106")
-        st.write(f"{llm_choice} selected")
-    elif llm_choice == "GPT-4":
-        llm = OpenAI(temperature=0.1, model="gpt-4-1106-preview")
+    if llm_choice == "GPT-4o-mini" or llm_choice == "GPT-4.1":
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            st.error("OpenAI API key not found. Please add it to your .env file.")
+            return None, llm_choice
+            
+        if llm_choice == "GPT-4o-mini":
+            llm = OpenAI(temperature=0.1, model="gpt-4o-mini", api_key=openai_api_key)
+        else:  # GPT-4.1
+            llm = OpenAI(temperature=0.1, model="gpt-4-0125-preview", api_key=openai_api_key)
         st.write(f"{llm_choice} selected")
     elif llm_choice == "Gemini":
-        llm = Gemini(model="models/gemini-pro")
+        google_api_key = os.getenv('GOOGLE_API_KEY')
+        if not google_api_key:
+            st.error("Google API key not found. Please add it to your .env file.")
+            return None, llm_choice
+        llm = GoogleGenAI(model="gemini-1.5-flash-latest", api_key=google_api_key)
         st.write(f"{llm_choice} selected")
     elif llm_choice == "Cohere":
-        llm = Cohere(model="command", api_key=os.environ['COHERE_API_TOKEN'])
+        cohere_api_key = os.getenv('COHERE_API_TOKEN')
+        if not cohere_api_key:
+            st.error("Cohere API key not found. Please add it to your .env file.")
+            return None, llm_choice
+        llm = Cohere(model="command", api_key=cohere_api_key)
         st.write(f"{llm_choice} selected")
     return llm, llm_choice
 
@@ -180,21 +197,31 @@ def select_response_synthesis_method():
 
 def select_vector_store():
     st.header("Choose Vector Store")
-    vector_stores = ["Simple", "Pinecone", "Qdrant"]
+    vector_stores = ["Simple", "Qdrant"]
+    
+    # Only show Pinecone as an option if the API key is available
+    pinecone_api_key = os.getenv('PINECONE_API_KEY')
+    if pinecone_api_key:
+        vector_stores.append("Pinecone")
+    
     selected_store = st.selectbox("Select Vector Store", vector_stores, on_change=reset_pipeline_generated)
 
     vector_store = None
 
-    if selected_store == "Pinecone":
-        pc = Pinecone(api_key=os.environ['PINECONE_API_KEY'])
-        index = pc.Index("test")
-        vector_store = PineconeVectorStore(pinecone_index=index)
-
+    if selected_store == "Pinecone" and pinecone_api_key:
+        try:
+            pc = Pinecone(api_key=pinecone_api_key)
+            index = pc.Index("test")
+            vector_store = PineconeVectorStore(pinecone_index=index)
+        except Exception as e:
+            st.error(f"Error initializing Pinecone: {e}")
+            return None, "Simple"
 
     elif selected_store == "Qdrant":
         client = qdrant_client.QdrantClient(location=":memory:")
         vector_store = QdrantVectorStore(client=client, collection_name="sampledata")
-    st.write(selected_store)
+    
+    st.write(f"Using {selected_store} vector store")
     return vector_store, selected_store
 
 
@@ -239,23 +266,40 @@ def send_query():
 def generate_code_snippet(llm_choice, embed_model_choice, node_parser_choice, response_mode, vector_store_choice):
     node_parser_params = st.session_state.get('node_parser_params', {})
     print(node_parser_params)
-    code_snippet = "from llama_index.llms import OpenAI, Gemini, Cohere\n"
+    code_snippet = "import os\n"
+    code_snippet += "from dotenv import load_dotenv\n"
+    code_snippet += "from llama_index.llms.openai import OpenAI\n"
+    code_snippet += "from llama_index.llms.google_genai import GoogleGenAI\n"
+    code_snippet += "from llama_index.llms.cohere import Cohere\n"
     code_snippet += "from llama_index.embeddings import HuggingFaceEmbedding\n"
     code_snippet += "from llama_index import ServiceContext, VectorStoreIndex, StorageContext\n"
     code_snippet += "from llama_index.node_parser import SentenceSplitter, CodeSplitter, SemanticSplitterNodeParser, TokenTextSplitter\n"
     code_snippet += "from llama_index.node_parser.file import HTMLNodeParser, JSONNodeParser, MarkdownNodeParser\n"
     code_snippet += "from llama_index.vector_stores import MilvusVectorStore, QdrantVectorStore\n"
     code_snippet += "import qdrant_client\n\n"
+    code_snippet += "# Load environment variables from .env file\n"
+    code_snippet += "load_dotenv()\n\n"
 
     # LLM initialization
-    if llm_choice == "GPT-3.5":
-        code_snippet += "llm = OpenAI(temperature=0.1, model='gpt-3.5-turbo-1106')\n"
-    elif llm_choice == "GPT-4":
-        code_snippet += "llm = OpenAI(temperature=0.1, model='gpt-4-1106-preview')\n"
+    if llm_choice == "GPT-4o-mini" or llm_choice == "GPT-4.1":
+        code_snippet += "openai_api_key = os.getenv('OPENAI_API_KEY')\n"
+        code_snippet += "if not openai_api_key:\n"
+        code_snippet += "    raise ValueError(\"OpenAI API key not found. Please add it to your .env file.\")\n"
+        
+        if llm_choice == "GPT-4o-mini":
+            code_snippet += "llm = OpenAI(temperature=0.1, model='gpt-4o-mini', api_key=openai_api_key)\n"
+        else:  # GPT-4.1
+            code_snippet += "llm = OpenAI(temperature=0.1, model='gpt-4-0125-preview', api_key=openai_api_key)\n"
     elif llm_choice == "Gemini":
-        code_snippet += "llm = Gemini(model='models/gemini-pro')\n"
+        code_snippet += "google_api_key = os.getenv('GOOGLE_API_KEY')\n"
+        code_snippet += "if not google_api_key:\n"
+        code_snippet += "    raise ValueError(\"Google API key not found. Please add it to your .env file.\")\n"
+        code_snippet += "llm = GoogleGenAI(model='gemini-1.5-flash-latest', api_key=google_api_key)\n"
     elif llm_choice == "Cohere":
-        code_snippet += "llm = Cohere(model='command', api_key='<YOUR_API_KEY>')  # Replace <YOUR_API_KEY> with your actual API key\n"
+        code_snippet += "cohere_api_key = os.getenv('COHERE_API_TOKEN')\n"
+        code_snippet += "if not cohere_api_key:\n"
+        code_snippet += "    raise ValueError(\"Cohere API key not found. Please add it to your .env file.\")\n"
+        code_snippet += "llm = Cohere(model='command', api_key=cohere_api_key)\n"
 
     # Embedding model initialization
     code_snippet += f"embed_model = HuggingFaceEmbedding(model_name='{embed_model_choice}')\n\n"
@@ -277,9 +321,20 @@ def generate_code_snippet(llm_choice, embed_model_choice, node_parser_choice, re
 
     # Vector store initialization
     if vector_store_choice == "Pinecone":
-        code_snippet += "pc = Pinecone(api_key=os.environ['PINECONE_API_KEY'])\n"
-        code_snippet += "index = pc.Index('test')\n"
-        code_snippet += "vector_store = PineconeVectorStore(pinecone_index=index)\n"
+        code_snippet += "# Load API key from .env file with fallback to environment variable\n"
+        code_snippet += "pinecone_api_key = os.getenv('PINECONE_API_KEY')\n"
+        code_snippet += "if not pinecone_api_key:\n"
+        code_snippet += "    print(\"Pinecone API key not found. Falling back to Simple vector store\")\n"
+        code_snippet += "    vector_store = None  # Use Simple vector store\n"
+        code_snippet += "else:\n"
+        code_snippet += "    try:\n"
+        code_snippet += "        pc = Pinecone(api_key=pinecone_api_key)\n"
+        code_snippet += "        index = pc.Index('test')\n"
+        code_snippet += "        vector_store = PineconeVectorStore(pinecone_index=index)\n"
+        code_snippet += "    except Exception as e:\n"
+        code_snippet += "        print(f\"Error initializing Pinecone: {e}\")\n"
+        code_snippet += "        print(\"Falling back to Simple vector store\")\n"
+        code_snippet += "        vector_store = None  # Use Simple vector store\n"
     elif vector_store_choice == "Qdrant":
         code_snippet += "client = qdrant_client.QdrantClient(location=':memory:')\n"
         code_snippet += "vector_store = QdrantVectorStore(client=client, collection_name='sampledata')\n"
